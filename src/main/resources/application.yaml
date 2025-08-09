@@ -1,0 +1,22 @@
+spring:
+  ai:
+    openai:
+      base-url: http://localhost:12434/engines
+      api-key: dummy
+      chat:
+        options:
+          model: ai/llama3.2:latest
+  datasource:
+    url: jdbc:postgresql://localhost:5432/chatgpt_clone
+    username: chat
+    password: chat
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: true
+    open-in-view: false
+  sql:
+    init:
+      mode: never
