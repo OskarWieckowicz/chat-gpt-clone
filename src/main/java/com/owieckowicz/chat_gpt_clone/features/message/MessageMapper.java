@@ -1,11 +1,19 @@
 package com.owieckowicz.chat_gpt_clone.features.message;
 
-import org.mapstruct.Mapper;
-import org.mapstruct.ReportingPolicy;
+import org.springframework.stereotype.Component;
 
-@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.IGNORE)
-public interface MessageMapper {
-    MessageResponse toResponse(Message entity);
+@Component
+public class MessageMapper {
+    public MessageResponse toResponse(Message entity) {
+        if (entity == null) return null;
+        return new MessageResponse(
+                entity.getId(),
+                entity.getConversationId(),
+                entity.getRole(),
+                entity.getContent(),
+                entity.getCreatedAt()
+        );
+    }
 }
 
 
