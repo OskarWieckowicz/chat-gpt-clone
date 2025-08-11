@@ -6,6 +6,7 @@ import com.owieckowicz.chat_gpt_clone.features.conversation.Conversation;
 import com.owieckowicz.chat_gpt_clone.features.conversation.ConversationRepository;
 import com.owieckowicz.chat_gpt_clone.features.message.Message;
 import com.owieckowicz.chat_gpt_clone.features.message.MessageRepository;
+import com.owieckowicz.chat_gpt_clone.features.tools.DateTimeTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -84,6 +85,7 @@ public class ChatService {
 
         StringBuilder assistantBuffer = new StringBuilder();
         return spec
+                .tools(new DateTimeTool())
                 .stream()
                 .content()
                 .doOnNext(assistantBuffer::append)
