@@ -9,10 +9,16 @@ import com.owieckowicz.chat_gpt_clone.features.message.MessageRepository;
 import com.owieckowicz.chat_gpt_clone.features.tools.DateTimeTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
+import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.stream.Stream;
 
 @Service
 public class ChatService {
@@ -27,14 +33,16 @@ public class ChatService {
     private final ObjectMapper objectMapper;
     private final GoogleSearchService googleSearchService;
     private final WebFetchService webFetchService;
+    private final VectorStore vectorStore;
 
     public ChatService(ChatClient.Builder builder,
                        ChatMemory chatMemory,
                        MessageRepository messageRepository,
                        ConversationRepository conversationRepository,
-                       ObjectMapper objectMapper,
-                       GoogleSearchService googleSearchService,
-                       WebFetchService webFetchService) {
+                        ObjectMapper objectMapper,
+                        GoogleSearchService googleSearchService,
+                        WebFetchService webFetchService,
+                        VectorStore vectorStore) {
         this.chatClient = builder
                 .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
                 .build();
@@ -43,6 +51,7 @@ public class ChatService {
         this.objectMapper = objectMapper;
         this.googleSearchService = googleSearchService;
         this.webFetchService = webFetchService;
+        this.vectorStore = vectorStore;
     }
 
     public Flux<String> chat(String userMessage) {
@@ -71,6 +80,20 @@ public class ChatService {
             spec = spec.system(webContext);
         }
 
+        // Attach RAG advisor if enabled or if auto-detect finds uploaded docs for this conversation
+        boolean hasDocs = hasAnyUploadedDocs(conversationId);
+        boolean useRag = settings.ragEnabled() || hasDocs;
+        if (useRag) {
+            var search = SearchRequest.builder()
+                    .topK(settings.ragTopK())
+                    .filterExpression("conversationId == '" + conversationId + "'")
+                    .build();
+            var qaAdvisor = QuestionAnswerAdvisor.builder(vectorStore)
+                    .searchRequest(search)
+                    .build();
+            spec = spec.advisors(qaAdvisor);
+        }
+
         var optionsBuilder = OpenAiChatOptions.builder();
         boolean hasOptions = false;
         if (settings.temperature() != null) {
@@ -90,7 +113,23 @@ public class ChatService {
                 .content()
                 .doOnNext(assistantBuffer::append)
                 .doOnError(err -> persistAssistantError(conversationId, err))
+                .onErrorResume(err -> Flux.empty())
                 .doOnComplete(() -> persistAssistantCompletion(conversationId, assistantBuffer.toString()));
+    }
+
+    private boolean hasAnyUploadedDocs(Long conversationId) {
+        try {
+            Path dir = Path.of("uploads", String.valueOf(conversationId));
+            if (!Files.isDirectory(dir)) return false;
+            try (Stream<Path> paths = Files.list(dir)) {
+                return paths.anyMatch(p -> {
+                    String name = p.getFileName().toString().toLowerCase();
+                    return name.endsWith(".pdf");
+                });
+            }
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private void persistUserMessage(Long conversationId, String userMessage) {
@@ -117,13 +156,17 @@ public class ChatService {
         messageRepository.save(failed);
     }
 
-    private record ConversationSettings(Double temperature, String systemPrompt, boolean webAccessEnabled, int searchTopK) {}
+    private record ConversationSettings(Double temperature, String systemPrompt,
+                                        boolean webAccessEnabled, int searchTopK,
+                                        boolean ragEnabled, int ragTopK) {}
 
     private ConversationSettings loadSettings(Long conversationId) {
         Double temperature = null;
         String systemPrompt = null;
         boolean webAccessEnabled = false;
         int searchTopK = 3;
+        boolean ragEnabled = false;
+        int ragTopK = 5;
         try {
             Conversation conv = conversationRepository.findById(conversationId).orElse(null);
             if (conv != null && conv.getSettings() != null && !conv.getSettings().isBlank()) {
@@ -132,11 +175,14 @@ public class ChatService {
                 if (node.hasNonNull("systemPrompt")) systemPrompt = node.get("systemPrompt").asText();
                 if (node.hasNonNull("webAccessEnabled")) webAccessEnabled = node.get("webAccessEnabled").asBoolean(false);
                 if (node.hasNonNull("searchTopK")) searchTopK = node.get("searchTopK").asInt(3);
+                if (node.hasNonNull("ragEnabled")) ragEnabled = node.get("ragEnabled").asBoolean(false);
+                if (node.hasNonNull("ragTopK")) ragTopK = node.get("ragTopK").asInt(5);
             }
         } catch (Exception ignored) {
         }
         int clampedTopK = Math.max(MIN_TOPK, Math.min(MAX_TOPK, searchTopK <= 0 ? 3 : searchTopK));
-        return new ConversationSettings(temperature, systemPrompt, webAccessEnabled, clampedTopK);
+        int clampedRagTopK = Math.max(1, Math.min(10, ragTopK <= 0 ? 5 : ragTopK));
+        return new ConversationSettings(temperature, systemPrompt, webAccessEnabled, clampedTopK, ragEnabled, clampedRagTopK);
     }
 
     private String buildWebContextIfEnabled(String userMessage, ConversationSettings settings) {

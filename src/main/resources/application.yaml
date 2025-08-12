@@ -6,6 +6,16 @@ spring:
       chat:
         options:
           model: ai/llama3.2:latest
+      embedding:
+        options:
+          model: ai/granite-embedding-multilingual:latest
+    vectorstore:
+      pgvector:
+        initialize-schema: true
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+#        dimensions: 768
+        max-document-batch-size: 1000
   datasource:
     url: jdbc:postgresql://localhost:5432/chatgpt_clone
     username: chat
@@ -20,6 +30,7 @@ spring:
   sql:
     init:
       mode: never
+
 google:
   cse:
     api-key: ${GOOGLE_CSE_API_KEY:}
