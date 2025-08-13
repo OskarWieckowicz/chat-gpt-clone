@@ -1,5 +1,6 @@
 package com.owieckowicz.chat_gpt_clone.features.chat;
 
+import com.owieckowicz.chat_gpt_clone.features.tools.DateTimeTool;
 import com.owieckowicz.chat_gpt_clone.features.message.Message;
 import com.owieckowicz.chat_gpt_clone.features.message.MessageRepository;
 import org.springframework.ai.chat.client.ChatClient;
@@ -82,6 +83,8 @@ public class ChatService {
         }
 
         spec = spec.user(userMessage);
+
+        spec = spec.tools(new DateTimeTool());
 
         StringBuilder assistantBuffer = new StringBuilder();
         return spec

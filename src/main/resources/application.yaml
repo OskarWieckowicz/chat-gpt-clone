@@ -1,12 +1,13 @@
 spring:
   ai:
     ollama:
+      base-url: http://localhost:11434
       chat:
         options:
-          model: llava:latest
+          model: llama3.2
       embedding:
         options:
-          model: all-minilm
+          model: nomic-embed-text
     vectorstore:
       pgvector:
         initialize-schema: true
