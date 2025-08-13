@@ -1,20 +1,18 @@
 spring:
   ai:
-    openai:
-      base-url: http://localhost:12434/engines
-      api-key: dummy
+    ollama:
       chat:
         options:
-          model: ai/llama3.2:latest
+          model: llava:latest
       embedding:
         options:
-          model: ai/granite-embedding-multilingual:latest
+          model: all-minilm
     vectorstore:
       pgvector:
         initialize-schema: true
         index-type: HNSW
         distance-type: COSINE_DISTANCE
-#        dimensions: 768
+        #        dimensions: 768
         max-document-batch-size: 1000
   datasource:
     url: jdbc:postgresql://localhost:5432/chatgpt_clone
@@ -30,6 +28,10 @@ spring:
   sql:
     init:
       mode: never
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 20MB
 
 google:
   cse:

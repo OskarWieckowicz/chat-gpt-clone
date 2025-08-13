@@ -1,25 +1,24 @@
 package com.owieckowicz.chat_gpt_clone.features.chat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.owieckowicz.chat_gpt_clone.features.message.Message;
 import com.owieckowicz.chat_gpt_clone.features.message.MessageRepository;
-import com.owieckowicz.chat_gpt_clone.features.tools.DateTimeTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.ollama.OllamaChatModel;
+import org.springframework.ai.ollama.api.OllamaOptions;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 
 @Service
 public class ChatService {
-    // retained for backward compatibility of constants if needed elsewhere
 
     private final ChatClient chatClient;
     private final MessageRepository messageRepository;
@@ -27,16 +26,13 @@ public class ChatService {
     private final ConversationSettingsService settingsService;
     private final WebContextBuilder webContextBuilder;
 
-    public ChatService(ChatClient.Builder builder,
+    public ChatService(OllamaChatModel chatModel,
                        ChatMemory chatMemory,
-                        MessageRepository messageRepository,
-                         ObjectMapper objectMapper,
-                        GoogleSearchService googleSearchService,
-                        WebFetchService webFetchService,
-                        VectorStore vectorStore,
-                        ConversationSettingsService settingsService,
-                        WebContextBuilder webContextBuilder) {
-        this.chatClient = builder
+                       MessageRepository messageRepository,
+                       VectorStore vectorStore,
+                       ConversationSettingsService settingsService,
+                       WebContextBuilder webContextBuilder) {
+        this.chatClient = ChatClient.builder(chatModel)
                 .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
                 .build();
         this.messageRepository = messageRepository;
@@ -85,21 +81,69 @@ public class ChatService {
             spec = spec.advisors(qaAdvisor);
         }
 
-        var optionsBuilder = OpenAiChatOptions.builder();
-        boolean hasOptions = false;
-        if (settings.temperature() != null) {
-            optionsBuilder.temperature(settings.temperature());
-            hasOptions = true;
-        }
-
         spec = spec.user(userMessage);
-        if (hasOptions) {
-            spec = spec.options(optionsBuilder.build());
-        }
 
         StringBuilder assistantBuffer = new StringBuilder();
         return spec
-                .tools(new DateTimeTool())
+                .stream()
+                .content()
+                .doOnNext(assistantBuffer::append)
+                .doOnError(err -> persistAssistantError(conversationId, err))
+                .onErrorResume(err -> Flux.empty())
+                .doOnComplete(() -> persistAssistantCompletion(conversationId, assistantBuffer.toString()));
+    }
+
+    public Flux<String> chatInConversationMultimodal(Long conversationId,
+                                                     String userMessage,
+                                                     org.springframework.core.io.ByteArrayResource[] images,
+                                                     org.springframework.http.MediaType[] mimeTypes) {
+        persistUserMessage(conversationId, userMessage);
+
+        var spec = chatClient.prompt();
+
+        ConversationSettings settings = settingsService.load(conversationId);
+
+        String webContext = webContextBuilder.build(userMessage, settings.searchTopK(), settings.webAccessEnabled(), chatClient);
+        boolean hasSystem = settings.systemPrompt() != null && !settings.systemPrompt().isBlank();
+        boolean hasWeb = webContext != null && !webContext.isBlank();
+        if (hasSystem && hasWeb) {
+            spec = spec.system(settings.systemPrompt() + "\n\n" + webContext);
+        } else if (hasSystem) {
+            spec = spec.system(settings.systemPrompt());
+        } else if (hasWeb) {
+            spec = spec.system(webContext);
+        }
+
+        boolean hasDocs = hasAnyUploadedDocs(conversationId);
+        boolean useRag = settings.ragEnabled() || hasDocs;
+        if (useRag) {
+            var search = SearchRequest.builder()
+                    .topK(settings.ragTopK())
+                    .filterExpression("conversationId == '" + conversationId + "'")
+                    .build();
+            var qaAdvisor = QuestionAnswerAdvisor.builder(vectorStore)
+                    .searchRequest(search)
+                    .build();
+            spec = spec.advisors(qaAdvisor);
+        }
+
+
+        spec = spec
+                // Vision: override model to a vision-capable one (e.g., llava)
+                .options(OllamaOptions.builder().model("llava").build())
+                .user(u -> {
+                    u.text(userMessage);
+                    if (images != null && mimeTypes != null) {
+                        for (int i = 0; i < images.length; i++) {
+                            // Per Ollama Chat docs, pass MediaType to u.media
+                            u.media(mimeTypes[i], images[i]);
+                        }
+                    }
+                });
+        // temperature can be encoded in system prompt if needed
+
+        StringBuilder assistantBuffer = new StringBuilder();
+        return spec
                 .stream()
                 .content()
                 .doOnNext(assistantBuffer::append)
@@ -146,9 +190,6 @@ public class ChatService {
         failed.setContent("[ERROR] " + (err != null ? err.getMessage() : "unknown error"));
         messageRepository.save(failed);
     }
-
-
-    // moved to SearchQueryService
 
 }
 

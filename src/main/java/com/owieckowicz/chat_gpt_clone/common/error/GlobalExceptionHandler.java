@@ -30,10 +30,14 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleGeneric(Exception ex) {
         Map<String, Object> body = new HashMap<>();
         body.put("timestamp", OffsetDateTime.now().toString());
-        body.put("status", HttpStatus.INTERNAL_SERVER_ERROR.value());
+        HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
+        if (ex instanceof org.springframework.web.multipart.MaxUploadSizeExceededException) {
+            status = HttpStatus.PAYLOAD_TOO_LARGE;
+        }
+        body.put("status", status.value());
         body.put("error", ex.getClass().getSimpleName());
         body.put("message", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
+        return ResponseEntity.status(status).body(body);
     }
 }
 
