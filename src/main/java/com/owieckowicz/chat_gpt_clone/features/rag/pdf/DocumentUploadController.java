@@ -4,6 +4,7 @@ import com.owieckowicz.chat_gpt_clone.features.rag.RagService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -12,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -20,9 +22,11 @@ import java.util.UUID;
 public class DocumentUploadController {
 
     private final RagService ragService;
+    private final JdbcTemplate jdbcTemplate;
 
-    public DocumentUploadController(RagService ragService) {
+    public DocumentUploadController(RagService ragService, JdbcTemplate jdbcTemplate) {
         this.ragService = ragService;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -54,6 +58,26 @@ public class DocumentUploadController {
                 "filename", original
         ));
     }
+
+    @GetMapping
+    public List<DocumentItem> list(@PathVariable Long conversationId) {
+        String sql = "SELECT DISTINCT metadata->>'documentId' AS document_id, metadata->>'filename' AS filename " +
+                "FROM public.vector_store WHERE metadata->>'conversationId' = ? ORDER BY filename";
+        return jdbcTemplate.query(sql, new Object[]{String.valueOf(conversationId)}, (rs, rowNum) -> {
+            String docIdStr = rs.getString("document_id");
+            String filename = rs.getString("filename");
+            Long docId = null;
+            try {
+                docId = Long.parseLong(docIdStr);
+            } catch (Exception ignored) {
+                // fallback if parsing fails
+                docId = 0L;
+            }
+            return new DocumentItem(docId, filename);
+        });
+    }
+
+    public record DocumentItem(Long documentId, String filename) {}
 }
 
 
